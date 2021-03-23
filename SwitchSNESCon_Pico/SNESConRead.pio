@@ -1,0 +1,63 @@
+// Code last modified 2021 KNfLrPn
+
+.program SNESConRead
+.side_set 1             ; 1 side-set bit
+
+; Constantly read SNES controller, pushing data to the FIFO.
+
+read:
+    set x, 15       side 0          ; will get 16 bits
+
+    set pins, 1     side 0          ; latch high
+    set pins, 0     side 0          ; latch low
+
+loop:
+    in pins, 1      side 0          ; shift in data
+    jmp x-- loop    side 1          ; jump if not done, make rising clock edge
+
+    push noblock    side 0          ; push data
+    jmp read        side 0          ; restart
+
+% c-sdk {
+static inline void SNESConRead_program_init(PIO pio, uint sm, uint offset, uint clkpin, uint latchpin, uint inpin) {
+    pio_sm_config c = SNESConRead_program_get_default_config(offset);
+
+    ////
+    // State machine configuration
+    ////
+
+    sm_config_set_clkdiv(&c, 6000);  // About 500 Hz sampling; doesn't really matter
+
+    // Map the state machine's SET pin group to latch.
+    sm_config_set_set_pins(&c, latchpin, 1);
+
+    // Configure side-set to control one pin: clock
+    sm_config_set_sideset(&c, 1, false, false);
+    sm_config_set_sideset_pins(&c, clkpin);
+    
+    // Map the state machine's IN pin group to set DIN pin.
+    sm_config_set_in_pins(&c, inpin);
+    sm_config_set_in_shift 	( &c, false, false, 0 ); 	
+
+    ////
+    // PIO configuration
+    ////
+
+    // Set this pin's GPIO function (connect PIO to the pads)
+    pio_gpio_init(pio, clkpin);
+    pio_gpio_init(pio, latchpin);
+
+    // Set the pin direction to input for DIN
+    pio_sm_set_consecutive_pindirs(pio, sm, inpin, 1, false);
+
+    // Set the pin direction to output for clock and latch
+    pio_sm_set_consecutive_pindirs(pio, sm, clkpin, 1, true);
+    pio_sm_set_consecutive_pindirs(pio, sm, latchpin, 1, true);
+    pio_sm_set_sideset_pins(pio, sm, clkpin);
+
+    // Load the configuration and jump to the start of the program
+    pio_sm_init(pio, sm, offset, &c);
+    // Set the state machine running
+    pio_sm_set_enabled(pio, sm, true);
+}
+%}
